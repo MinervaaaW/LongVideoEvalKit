@@ -1,0 +1,40 @@
+dataset:
+  video_root: ./eval_data
+  prompt_file: ./eval_data/prompts.jsonl
+  prompt_dir: null
+  runtime_file: null
+  layout: standard
+  model_name: null
+  video_selection: all
+
+sampling:
+  sample_fps: 2.0
+  segment_seconds: 2.0
+  max_segments: 30
+  max_frames_per_segment: 8
+
+metrics:
+  quality_proxy: true
+  colorhist: true
+  clip: false
+  dinov2: false
+  repetition_min_gap_segments: 5
+  repetition_threshold: 0.95
+
+models:
+  clip_model: ViT-B-32
+  clip_pretrained: laion2b_s34b_b79k
+  dinov2_model: facebook/dinov2-base
+  clip_backend: open_clip
+  clip_repo: null
+  clip_cache_dir: null
+
+report:
+  output_dir: ./outputs
+
+vbench:
+  enabled: false
+  dimensions: []
+  command: vbench
+  mode: custom_input
+  raw_output_subdir: vbench_raw

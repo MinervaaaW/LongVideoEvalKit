@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "longvideo-evalkit"
+version = "0.1.0"
+description = "Extensible evaluation toolkit for long video generation: VBench wrapper, long-range consistency, drift, repetition, and efficiency metrics."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "LongVideoEvalKit contributors"}]
+license = {text = "MIT"}
+dependencies = [
+  "numpy>=1.23",
+  "pillow>=9.0",
+  "opencv-python-headless>=4.7",
+  "PyYAML>=6.0",
+  "tqdm>=4.65"
+]
+
+[project.optional-dependencies]
+clip = ["torch>=2.0", "open_clip_torch>=2.24"]
+dino = ["torch>=2.0", "transformers>=4.38"]
+report = ["pandas>=2.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+longvideo-eval = "longvideo_eval.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["longvideo_eval*"]
