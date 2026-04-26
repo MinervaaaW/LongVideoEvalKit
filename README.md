@@ -332,7 +332,7 @@ The roadmap now lives in [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md).
 High-level milestones:
 
 - `v0.1`: stabilize and test the currently implemented pipeline, including native CLIP, native DINOv2, and integrated official VBench.
-- `v0.2`: improve reporting, diagnostics, and confidence estimates.
-- `v0.3`: integrate `VBench-Long`.
-- `v0.4`: evaluate broader `VBench++` modules such as `VBench-I2V` and trustworthiness tracks.
+- `v0.2`: integrate `VBench-Long`.
+- `v0.3`: evaluate broader `VBench++` modules such as `VBench-I2V` and trustworthiness tracks.
+- `v0.4`: improve reporting, diagnostics, and confidence estimates.
 - `v1.0`: benchmark productization, judge models, and leaderboard-ready reproducibility.
