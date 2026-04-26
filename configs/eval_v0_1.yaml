@@ -22,12 +22,12 @@ metrics:
   repetition_threshold: 0.95
 
 models:
-  clip_model: ViT-B-32
+  clip_model: ViT-B/32
   clip_pretrained: laion2b_s34b_b79k
-  dinov2_model: facebook/dinov2-base
-  clip_backend: open_clip
+  dinov2_model: ~/.cache/dinov2-base
+  clip_backend: openai_clip
   clip_repo: null
-  clip_cache_dir: null
+  clip_cache_dir: ~/.cache/clip
 
 report:
   output_dir: ./outputs

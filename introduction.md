@@ -319,6 +319,35 @@ Interpretation:
 - These metrics measure cost, not output quality.
 - They become most useful when paired with quality or consistency metrics to analyze efficiency-quality tradeoffs.
 
+### 4.12 `vbench.*`
+
+These fields come from official VBench. The toolkit does not reimplement them. Instead, it invokes official VBench in `custom_input` mode, stores the raw artifacts, and merges standardized `vbench.*` columns back into toolkit reports.
+
+Currently integrated dimensions are:
+
+- `vbench.aesthetic_quality`
+- `vbench.imaging_quality`
+- `vbench.subject_consistency`
+- `vbench.background_consistency`
+- `vbench.motion_smoothness`
+- `vbench.dynamic_degree`
+
+Interpretation:
+
+- `vbench.aesthetic_quality`: official VBench judgment of overall visual appeal.
+- `vbench.imaging_quality`: official VBench judgment of visual quality. Use this instead of `quality_proxy.*` when you need an official benchmark quality number.
+- `vbench.subject_consistency`: official VBench judgment of whether the main subject remains consistent over time.
+- `vbench.background_consistency`: official VBench judgment of whether the background stays coherent and stable.
+- `vbench.motion_smoothness`: official VBench judgment of whether motion appears smooth and temporally natural.
+- `vbench.dynamic_degree`: official VBench judgment of motion intensity. This helps separate "stable because it is correct" from "stable because it barely moves."
+
+Reporting behavior:
+
+- `model_summary.csv` stores merged model-level `vbench.*` columns whenever the official outputs can be parsed.
+- `per_video_metrics.csv` stores `vbench.*` only when official outputs contain stable per-video rows that can be matched back to generated videos.
+- Raw official artifacts stay under `vbench_raw/`.
+- Standardized toolkit exports are written to `vbench_merged_summary.csv/jsonl` and, when available, `vbench_merged_per_video.csv/jsonl`.
+
 ## 5. How to analyze metrics jointly
 
 Single metrics are often ambiguous. The strongest analysis comes from combining them.
@@ -377,6 +406,13 @@ Typical patterns:
 - stable quality proxy but poor `clip_t`:
   clean-looking output can still be semantically wrong.
 
+When official VBench is available:
+
+- high `vbench.imaging_quality` with low `quality_proxy.mean`:
+  the lightweight proxy may be underestimating the video; trust the official VBench score more for benchmarking.
+- low `vbench.imaging_quality` with acceptable `quality_proxy.mean`:
+  the video may be sharp enough but still contain artifacts or unnatural details that the lightweight proxy misses.
+
 ### 5.4 Frozen video, loops, and mode collapse
 
 Compare:
@@ -395,6 +431,13 @@ Typical patterns:
 - high `repetition_colorhist` but lower `repetition_clip`:
   the appearance palette repeats, but content still changes.
 
+When official VBench is available:
+
+- high `vbench.motion_smoothness` but low `vbench.dynamic_degree`:
+  motion may be smooth mainly because the video is too static.
+- high `vbench.dynamic_degree` but low `vbench.motion_smoothness`:
+  the model produces enough motion, but the motion is jerky, unstable, or visually implausible.
+
 ### 5.5 Detecting early-good, late-bad failures
 
 Watch:
@@ -411,6 +454,13 @@ This pattern is common in long-video generation:
 - then worse prompt alignment and worse quality near the end.
 
 When all three drops are large, the model likely cannot sustain long-horizon generation.
+
+If official VBench is also available, compare these failures against:
+
+- `vbench.subject_consistency`
+- `vbench.background_consistency`
+
+This helps separate "late-stage semantic drift" from "late-stage visual degradation." For example, low `vbench.subject_consistency` with moderate `vbench.background_consistency` often indicates that the subject drifts while the broader scene scaffold remains relatively intact.
 
 ### 5.6 Efficiency-quality tradeoff
 
@@ -450,9 +500,12 @@ Therefore:
 
 If you run official VBench through the wrapper or through `longvideo-eval run --enable-vbench`, those imported fields should be labeled explicitly, for example:
 
+- `vbench.aesthetic_quality`
 - `vbench.imaging_quality`
+- `vbench.background_consistency`
 - `vbench.subject_consistency`
 - `vbench.motion_smoothness`
+- `vbench.dynamic_degree`
 
 That separation keeps reports scientifically clean and avoids confusing proxy diagnostics with benchmark scores.
 

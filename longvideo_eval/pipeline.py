@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List
@@ -56,16 +58,40 @@ def _build_coverage_rows(
     return coverage, missing_rows
 
 
-def _build_vbench_targets(
-    cfg: EvalConfig,
-    raw_records: List[tuple[str, str, Path]],
-) -> list[tuple[str, Path]]:
-    if cfg.dataset.layout == "prompt_dirs":
-        model = cfg.dataset.model_name or cfg.dataset.video_root.name
-        return [(model, cfg.dataset.video_root)]
+def _link_or_copy(src: Path, dst: Path) -> None:
+    try:
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
+        os.symlink(src.resolve(), dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
-    models = sorted({model for model, _, _ in raw_records})
-    return [(model, cfg.dataset.video_root / model) for model in models]
+
+def _stage_vbench_inputs(
+    raw_records: List[tuple[str, str, Path]],
+    staging_root: Path,
+) -> list[tuple[str, Path]]:
+    grouped: dict[str, list[tuple[str, Path]]] = {}
+    for model, prompt_id, path in raw_records:
+        grouped.setdefault(model, []).append((prompt_id, path))
+
+    targets: list[tuple[str, Path]] = []
+    for model, items in sorted(grouped.items()):
+        model_dir = staging_root / model
+        model_dir.mkdir(parents=True, exist_ok=True)
+        seen_names: set[str] = set()
+        for prompt_id, path in items:
+            filename = path.name
+            if filename in seen_names:
+                raise RuntimeError(
+                    f"VBench staging requires unique video basenames per model. "
+                    f"Duplicate filename '{filename}' found for model={model}."
+                )
+            seen_names.add(filename)
+            staged_path = model_dir / filename
+            _link_or_copy(path, staged_path)
+        targets.append((model, model_dir))
+    return targets
 
 
 def _run_vbench_and_merge(
@@ -75,7 +101,8 @@ def _run_vbench_and_merge(
     summary: List[Dict[str, Any]],
     out_dir: Path,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    targets = _build_vbench_targets(cfg, raw_records)
+    staging_root = out_dir / "vbench_inputs"
+    targets = _stage_vbench_inputs(raw_records, staging_root)
     raw_root = out_dir / cfg.vbench.raw_output_subdir
     merged_summary_rows: list[dict[str, Any]] = []
     merged_per_video_rows: list[dict[str, Any]] = []

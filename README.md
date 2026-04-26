@@ -2,7 +2,7 @@
 
 `LongVideoEvalKit` is an extensible evaluation toolkit for long-video generation experiments. v0.1 focuses on a stable, runnable pipeline rather than a full benchmark leaderboard.
 
-For a detailed explanation of every metric, formulas, and multi-metric analysis strategies, see [introduction.md](./introduction.md). A Chinese version is available at [介绍.md](./介绍.md).
+For a detailed explanation of every metric, formulas, and multi-metric analysis strategies, see [introduction.md](./introduction.md). A Chinese version is available at [介绍.md](./介绍.md). For local-only model cache setup, download URLs, expected `~/.cache` layout, and the code locations that consume each checkpoint, see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md).
 
 It provides:
 
@@ -27,19 +27,21 @@ Basic installation:
 pip install -e .
 ```
 
-Optional OpenCLIP metrics:
+Optional CLIP metrics:
 
 ```bash
 pip install -e '.[clip]'
 ```
 
-OpenAI CLIP metrics can also reuse an existing `clip` install or a local repo such as `~/CLIP`.
+The default toolkit configuration now uses local-only OpenAI CLIP weights from `~/.cache/clip`.
 
 Optional DINOv2 metrics:
 
 ```bash
 pip install -e '.[dino]'
 ```
+
+The default toolkit configuration now uses the local Hugging Face directory at `~/.cache/dinov2-base`.
 
 Official VBench is installed separately:
 
@@ -133,7 +135,7 @@ conda run -n eval longvideo-eval run \
   --segment-seconds 2
 ```
 
-Enable CLIP metrics with OpenAI CLIP from `~/CLIP`:
+Enable CLIP metrics with the local OpenAI CLIP cache:
 
 ```bash
 conda run -n eval longvideo-eval run \
@@ -145,8 +147,7 @@ conda run -n eval longvideo-eval run \
   --output-dir ./outputs/test_model_perf_clip \
   --enable-clip \
   --clip-backend openai_clip \
-  --clip-repo ~/CLIP \
-  --clip-cache-dir ~/CLIP/.cache/clip \
+  --clip-cache-dir ~/.cache/clip \
   --clip-model ViT-B/32
 ```
 
@@ -204,15 +205,15 @@ Require either `open_clip_torch` or OpenAI `clip`:
 
 Backends:
 
-- `open_clip` keeps the original v0.1 behavior and uses `clip_model` + `clip_pretrained`.
-- `openai_clip` uses `clip.load()` and optionally prepends `--clip-repo ~/CLIP` to `sys.path`.
-- In this environment, `--clip-cache-dir ~/CLIP/.cache/clip` reuses the existing `ViT-B-32.pt` cache.
-- You can also point `--clip-cache-dir` to any other writable directory when the default `~/.cache/clip` location is not writable.
+- `openai_clip` is the default path and now resolves a local checkpoint file from `~/.cache/clip`.
+- `open_clip` is still supported, but `clip_pretrained` must point to a local checkpoint file.
+- `--clip-repo` remains available when you want to import `clip` from a local source checkout instead of an installed package.
+- You can point `--clip-cache-dir` to a different local cache directory when needed.
 - For long prompts, the OpenAI CLIP path tokenizes with truncation enabled to avoid failures on prompt files like `test_model_perf/prompt/*.txt`.
 
 ### Optional DINOv2 metrics
 
-Require `transformers` and a DINOv2 checkpoint:
+Require `transformers` and a local DINOv2 checkpoint directory:
 
 - `dinov2_lc.mean`, `dinov2_lc.end`, `dinov2_lc.drop`;
 - `drift_dinov2.mean`, `drift_dinov2.end`.
@@ -221,14 +222,28 @@ Require `transformers` and a DINOv2 checkpoint:
 
 When `--enable-vbench` is used, official VBench is run in `custom_input` mode and merged into reports with a `vbench.*` prefix. Current integrated dimensions:
 
-- `vbench.aesthetic_quality`
-- `vbench.imaging_quality`
-- `vbench.subject_consistency`
-- `vbench.background_consistency`
-- `vbench.motion_smoothness`
-- `vbench.dynamic_degree`
+- `vbench.aesthetic_quality` - official VBench aesthetic score
+- `vbench.imaging_quality` - official VBench image quality score
+- `vbench.subject_consistency` - official VBench subject consistency score
+- `vbench.background_consistency` - official VBench background consistency score
+- `vbench.motion_smoothness` - official VBench motion smoothness score
+- `vbench.dynamic_degree` - official VBench motion intensity / dynamic degree score
 
 These fields come from official VBench outputs. They are intentionally namespaced to avoid confusion with toolkit-native proxy metrics such as `quality_proxy.*` or `clip_*`.
+
+The wrapper now runs official VBench in local-checkpoint mode by appending `--load_ckpt_from_local True`. Prepare the required `~/.cache/vbench` assets first using [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md). The VBench CLIP files under `~/.cache/vbench/clip_model/` may be regular files or symlinks to the shared `~/.cache/clip/` cache.
+
+Reporting rules:
+
+- `model_summary.csv` always stores merged model-level `vbench.*` columns when VBench succeeds.
+- `per_video_metrics.csv` stores `vbench.*` only when the official VBench outputs contain stable per-video rows that the toolkit can parse.
+- Raw official artifacts remain under `vbench_raw/`, while standardized toolkit exports are written to `vbench_merged_summary.csv/jsonl` and, when available, `vbench_merged_per_video.csv/jsonl`.
+
+Interpretation hints:
+
+- Prefer `vbench.imaging_quality` and `vbench.aesthetic_quality` for official visual quality judgment, not `quality_proxy.*`.
+- Prefer `vbench.subject_consistency` and `vbench.background_consistency` for official consistency judgment, then compare them against toolkit proxies such as `clip_f.*`, `colorhist_lc.*`, and `drift_*` for diagnosis.
+- Prefer `vbench.motion_smoothness` and `vbench.dynamic_degree` together: a model can be smooth but static, or dynamic but unstable.
 
 ## Runtime sidecar file
 
@@ -308,6 +323,7 @@ Notes:
 - The toolkit runs one VBench invocation per requested dimension.
 - Integrated mode currently supports only the official custom-input dimensions documented by VBench: `subject_consistency`, `background_consistency`, `motion_smoothness`, `dynamic_degree`, `aesthetic_quality`, `imaging_quality`.
 - Raw official outputs are stored below `vbench_raw/`; standardized toolkit files are written as `vbench_merged_summary.csv/jsonl` and, when available, `vbench_merged_per_video.csv/jsonl`.
+- The toolkit merges official fields with a `vbench.` prefix and keeps toolkit-native proxy metrics unchanged.
 
 ## Development roadmap
 

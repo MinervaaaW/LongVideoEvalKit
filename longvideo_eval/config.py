@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from longvideo_eval.model_defaults import default_clip_cache_dir, default_dinov2_model_dir
+
 
 @dataclass
 class DatasetConfig:
@@ -38,12 +40,12 @@ class MetricConfig:
 
 @dataclass
 class ModelConfig:
-    clip_model: str = "ViT-B-32"
+    clip_model: str = "ViT-B/32"
     clip_pretrained: str = "laion2b_s34b_b79k"
-    dinov2_model: str = "facebook/dinov2-base"
-    clip_backend: str = "open_clip"
+    dinov2_model: str | Path = field(default_factory=default_dinov2_model_dir)
+    clip_backend: str = "openai_clip"
     clip_repo: Optional[Path] = None
-    clip_cache_dir: Optional[Path] = None
+    clip_cache_dir: Optional[Path] = field(default_factory=default_clip_cache_dir)
 
 
 @dataclass
@@ -88,6 +90,13 @@ def _validate_dataset_config(dataset: DatasetConfig) -> None:
 def _validate_model_config(models: ModelConfig) -> None:
     if models.clip_backend not in {"open_clip", "openai_clip"}:
         raise ValueError(f"Unsupported models.clip_backend: {models.clip_backend}")
+    if models.clip_backend == "open_clip":
+        checkpoint = Path(models.clip_pretrained).expanduser()
+        if not checkpoint.is_file():
+            raise ValueError(
+                "models.clip_pretrained must point to a local OpenCLIP checkpoint file when "
+                "models.clip_backend='open_clip'"
+            )
 
 
 def _validate_vbench_config(vbench: VBenchConfig) -> None:
@@ -130,12 +139,12 @@ def load_config(path: str | Path) -> EvalConfig:
         sampling=SamplingConfig(**sampling_raw),
         metrics=MetricConfig(**metrics_raw),
         models=ModelConfig(
-            clip_model=models_raw.get("clip_model", "ViT-B-32"),
+            clip_model=models_raw.get("clip_model", "ViT-B/32"),
             clip_pretrained=models_raw.get("clip_pretrained", "laion2b_s34b_b79k"),
-            dinov2_model=models_raw.get("dinov2_model", "facebook/dinov2-base"),
-            clip_backend=models_raw.get("clip_backend", "open_clip"),
+            dinov2_model=_path_or_none(models_raw.get("dinov2_model")) or default_dinov2_model_dir(),
+            clip_backend=models_raw.get("clip_backend", "openai_clip"),
             clip_repo=_path_or_none(models_raw.get("clip_repo")),
-            clip_cache_dir=_path_or_none(models_raw.get("clip_cache_dir")),
+            clip_cache_dir=_path_or_none(models_raw.get("clip_cache_dir")) or default_clip_cache_dir(),
         ),
         report=ReportConfig(output_dir=Path(report_raw.get("output_dir", "./outputs")).expanduser()),
         vbench=VBenchConfig(
@@ -188,7 +197,7 @@ def build_config_from_args(args: Any) -> EvalConfig:
         if args.clip_pretrained:
             cfg.models.clip_pretrained = args.clip_pretrained
         if args.dinov2_model:
-            cfg.models.dinov2_model = args.dinov2_model
+            cfg.models.dinov2_model = Path(args.dinov2_model).expanduser()
         if args.clip_backend:
             cfg.models.clip_backend = args.clip_backend
         if args.clip_repo:
@@ -238,12 +247,12 @@ def build_config_from_args(args: Any) -> EvalConfig:
             repetition_threshold=args.repetition_threshold,
         ),
         models=ModelConfig(
-            clip_model=args.clip_model,
-            clip_pretrained=args.clip_pretrained,
-            dinov2_model=args.dinov2_model,
-            clip_backend=args.clip_backend or "open_clip",
+            clip_model=args.clip_model or "ViT-B/32",
+            clip_pretrained=args.clip_pretrained or "laion2b_s34b_b79k",
+            dinov2_model=Path(args.dinov2_model).expanduser() if args.dinov2_model else default_dinov2_model_dir(),
+            clip_backend=args.clip_backend or "openai_clip",
             clip_repo=Path(args.clip_repo).expanduser() if args.clip_repo else None,
-            clip_cache_dir=Path(args.clip_cache_dir).expanduser() if args.clip_cache_dir else None,
+            clip_cache_dir=Path(args.clip_cache_dir).expanduser() if args.clip_cache_dir else default_clip_cache_dir(),
         ),
         report=ReportConfig(output_dir=Path(args.output_dir or "./outputs").expanduser()),
         vbench=VBenchConfig(

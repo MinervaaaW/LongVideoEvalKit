@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Sequence
 
+from longvideo_eval.model_defaults import VBENCH_LOCAL_ASSET_PATHS
 from longvideo_eval.report.writer import write_csv, write_jsonl
 
 SUPPORTED_CUSTOM_INPUT_DIMENSIONS = {
@@ -20,6 +22,7 @@ SUPPORTED_CUSTOM_INPUT_DIMENSIONS = {
 }
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
+VBENCH_LOCAL_FLAG = ("--load_ckpt_from_local", "True")
 
 
 @dataclass
@@ -35,6 +38,30 @@ class VBenchInvocation:
 class VBenchMergedResults:
     summary_rows: list[dict[str, Any]]
     per_video_rows: list[dict[str, Any]]
+
+
+class VBenchExecutionError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        message: str,
+        dimension: str,
+        command: Sequence[str],
+        output_dir: Path,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        details = [message, f"dimension={dimension}", f"output_dir={output_dir}", f"command={' '.join(command)}"]
+        if stdout.strip():
+            details.append(f"stdout:\n{stdout.strip()}")
+        if stderr.strip():
+            details.append(f"stderr:\n{stderr.strip()}")
+        super().__init__("\n".join(details))
+        self.dimension = dimension
+        self.command = list(command)
+        self.output_dir = output_dir
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def _normalize_path_text(value: str) -> str:
@@ -67,6 +94,108 @@ def _parse_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _summarize_output(stdout: str, stderr: str, limit: int = 4000) -> tuple[str, str]:
+    stdout = stdout.strip()
+    stderr = stderr.strip()
+    if len(stdout) > limit:
+        stdout = stdout[:limit] + "\n...[truncated]"
+    if len(stderr) > limit:
+        stderr = stderr[:limit] + "\n...[truncated]"
+    return stdout, stderr
+
+
+def _looks_like_vbench_failure(stdout: str, stderr: str) -> bool:
+    haystack = f"{stdout}\n{stderr}".lower()
+    markers = [
+        "traceback",
+        "childfailederror",
+        "processgroupnccl",
+        "no gpus found",
+        "runtimeerror:",
+        "valueerror:",
+        "error:",
+        "failed",
+    ]
+    return any(marker in haystack for marker in markers)
+
+
+def _looks_like_proxy_scheme_failure(stdout: str, stderr: str) -> bool:
+    haystack = f"{stdout}\n{stderr}".lower()
+    return "proxy url" in haystack and "unsupported scheme" in haystack and "socks5h" in haystack
+
+
+def _failure_reason(returncode: int, stdout: str, stderr: str) -> str:
+    reasons: list[str] = []
+    if returncode != 0:
+        reasons.append("non-zero return code")
+    if _looks_like_vbench_failure(stdout, stderr):
+        reasons.append("failure markers in stdout/stderr")
+    return ", ".join(reasons) or "unknown failure"
+
+
+def _rewrite_proxy_url(value: str) -> str:
+    prefix = "socks5h://"
+    if value.lower().startswith(prefix):
+        return "socks5://" + value[len(prefix):]
+    return value
+
+
+def _build_proxy_retry_env(env: dict[str, str]) -> tuple[dict[str, str] | None, list[str]]:
+    updated = dict(env)
+    changed: list[str] = []
+    for key in (
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ):
+        value = updated.get(key)
+        if not value:
+            continue
+        rewritten = _rewrite_proxy_url(value)
+        if rewritten != value:
+            updated[key] = rewritten
+            changed.append(key)
+    if not changed:
+        return None, []
+    return updated, changed
+
+
+def _torch_cuda_is_available() -> bool | None:
+    try:
+        import torch
+    except Exception:
+        return None
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return None
+
+
+def _list_output_files(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return [str(p.relative_to(path)) for p in sorted(path.rglob("*")) if p.is_file()]
+
+
+def _collect_missing_local_assets(dimensions: Sequence[str]) -> list[Path]:
+    missing: list[Path] = []
+    for dimension in dimensions:
+        for path in VBENCH_LOCAL_ASSET_PATHS.get(dimension, []):
+            if not path.exists():
+                missing.append(path)
+    return missing
+
+
+def _merge_vbench_extra_args(extra_args: Sequence[str] | None) -> list[str]:
+    merged = list(extra_args or [])
+    if VBENCH_LOCAL_FLAG[0] not in merged:
+        merged.extend(VBENCH_LOCAL_FLAG)
+    return merged
 
 
 def _string_value(value: Any) -> str | None:
@@ -414,6 +543,22 @@ class VBenchRunner:
         self.command = command
         self.mode = mode
 
+    def _run_command(
+        self,
+        cmd: Sequence[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            list(cmd),
+            check=False,
+            text=True,
+            capture_output=True,
+            cwd=str(cwd),
+            env=env,
+        )
+
     def _validate_dimensions(self, dimensions: Sequence[str]) -> None:
         if self.mode != "custom_input":
             raise ValueError(f"Unsupported VBench mode: {self.mode}")
@@ -424,12 +569,34 @@ class VBenchRunner:
                 + ", ".join(sorted(invalid))
             )
 
+    def _preflight(self) -> None:
+        cuda_ok = _torch_cuda_is_available()
+        if cuda_ok is False:
+            raise RuntimeError(
+                "Official VBench requires a CUDA-visible PyTorch runtime in the current environment, "
+                "but torch.cuda.is_available() is False. "
+                "Please run it in an environment where PyTorch can see the GPU."
+            )
+
+    def _validate_local_assets(self, dimensions: Sequence[str]) -> None:
+        missing = _collect_missing_local_assets(dimensions)
+        if not missing:
+            return
+        formatted = "\n".join(str(path) for path in missing)
+        raise RuntimeError(
+            "Official VBench is configured for local-only checkpoint loading, but the following "
+            f"required files or directories are missing:\n{formatted}"
+        )
+
     def build_command(
         self,
         video_root: str | Path,
         dimension: str,
+        output_dir: str | Path,
         extra_args: Sequence[str] | None = None,
     ) -> list[str]:
+        video_root = Path(video_root).expanduser().resolve()
+        output_dir = Path(output_dir).expanduser().resolve()
         cmd: List[str] = [
             self.command,
             "evaluate",
@@ -439,9 +606,10 @@ class VBenchRunner:
             dimension,
             "--mode",
             self.mode,
+            "--output_path",
+            str(output_dir),
         ]
-        if extra_args:
-            cmd.extend(extra_args)
+        cmd.extend(_merge_vbench_extra_args(extra_args))
         return cmd
 
     def run(
@@ -453,6 +621,9 @@ class VBenchRunner:
         dry_run: bool = False,
     ) -> list[VBenchInvocation]:
         self._validate_dimensions(dimensions)
+        if not dry_run:
+            self._preflight()
+            self._validate_local_assets(dimensions)
         root = Path(output_dir)
         root.mkdir(parents=True, exist_ok=True)
 
@@ -460,24 +631,48 @@ class VBenchRunner:
         for dimension in dimensions:
             dim_dir = root / dimension
             dim_dir.mkdir(parents=True, exist_ok=True)
-            cmd = self.build_command(video_root=video_root, dimension=dimension, extra_args=extra_args)
+            cmd = self.build_command(
+                video_root=video_root,
+                dimension=dimension,
+                output_dir=dim_dir,
+                extra_args=extra_args,
+            )
             if dry_run:
                 invocations.append(VBenchInvocation(dimension=dimension, command=cmd, cwd=dim_dir))
                 continue
-            completed = subprocess.run(
-                cmd,
-                check=True,
-                text=True,
-                capture_output=True,
-                cwd=str(dim_dir),
-            )
+            completed = self._run_command(cmd, cwd=dim_dir)
+            stdout, stderr = _summarize_output(completed.stdout, completed.stderr)
+            failed = completed.returncode != 0 or _looks_like_vbench_failure(stdout, stderr)
+            if failed and _looks_like_proxy_scheme_failure(stdout, stderr):
+                retry_env, rewritten_proxy_vars = _build_proxy_retry_env(dict(os.environ))
+                if retry_env is not None:
+                    completed = self._run_command(cmd, cwd=dim_dir, env=retry_env)
+                    stdout, stderr = _summarize_output(completed.stdout, completed.stderr)
+                    failed = completed.returncode != 0 or _looks_like_vbench_failure(stdout, stderr)
+                    if failed:
+                        stderr = (
+                            f"Retried after rewriting proxy vars to socks5: {', '.join(rewritten_proxy_vars)}\n\n"
+                            f"{stderr}"
+                        )
+            if failed:
+                raise VBenchExecutionError(
+                    message=(
+                        "Official VBench execution failed "
+                        f"(returncode={completed.returncode}, reason={_failure_reason(completed.returncode, stdout, stderr)})"
+                    ),
+                    dimension=dimension,
+                    command=cmd,
+                    output_dir=dim_dir,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
             invocations.append(
                 VBenchInvocation(
                     dimension=dimension,
                     command=cmd,
                     cwd=dim_dir,
-                    stdout=completed.stdout,
-                    stderr=completed.stderr,
+                    stdout=stdout,
+                    stderr=stderr,
                 )
             )
         return invocations
@@ -505,6 +700,15 @@ def run_and_collect_vbench(
     if dry_run:
         return invocations, VBenchMergedResults(summary_rows=[], per_video_rows=[])
     results = parse_vbench_outputs(output_dir, dimensions=dimensions, model_name=model_name)
+    if not results.summary_rows and not results.per_video_rows:
+        listed_files = _list_output_files(Path(output_dir))
+        summary = "\n".join(listed_files[:100]) if listed_files else "(no files found)"
+        raise RuntimeError(
+            "Official VBench finished but no parseable results were found.\n"
+            f"output_dir={output_dir}\n"
+            f"dimensions={', '.join(dimensions)}\n"
+            f"files:\n{summary}"
+        )
     return invocations, results
 
 
