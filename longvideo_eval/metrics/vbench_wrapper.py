@@ -259,6 +259,70 @@ def _read_structured_rows(path: Path) -> Iterator[dict[str, Any]]:
         yield from _flatten_records(payload)
 
 
+def _extract_dimension_payload_rows(
+    path: Path,
+    *,
+    dimension: str,
+    model_name: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if path.suffix.lower() != ".json":
+        return [], []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return [], []
+    if not isinstance(payload, dict):
+        return [], []
+
+    matched_key = next((key for key in payload if str(key).strip().lower() == dimension.lower()), None)
+    if matched_key is None:
+        return [], []
+
+    value = payload[matched_key]
+    summary_rows: list[dict[str, Any]] = []
+    per_video_rows: list[dict[str, Any]] = []
+
+    score: float | None = None
+    details: Any = None
+    if isinstance(value, list) and value:
+        score = _parse_float(value[0])
+        if len(value) > 1:
+            details = value[1]
+    else:
+        score = _parse_float(value)
+
+    if score is not None:
+        summary_rows.append(
+            {
+                "model": model_name,
+                "dimension": dimension,
+                "score": score,
+            }
+        )
+
+    if isinstance(details, list):
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            item_score = _extract_score(item, dimension)
+            if item_score is None:
+                continue
+            video_info = _extract_video_info(item)
+            if not video_info:
+                continue
+            per_video_rows.append(
+                {
+                    "model": model_name,
+                    "dimension": dimension,
+                    "score": item_score,
+                    **video_info,
+                }
+            )
+
+    return summary_rows, per_video_rows
+
+
 def _extract_score(record: dict[str, Any], dimension: str) -> float | None:
     lower_map = {str(k).strip().lower(): v for k, v in record.items()}
     preferred = [
@@ -504,6 +568,15 @@ def parse_vbench_outputs(
             continue
         for path in sorted(dim_dir.rglob("*")):
             if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl", ".csv"}:
+                continue
+            specialized_summary, specialized_per_video = _extract_dimension_payload_rows(
+                path,
+                dimension=dimension,
+                model_name=model_name,
+            )
+            if specialized_summary or specialized_per_video:
+                summary_candidates.extend(specialized_summary)
+                per_video_candidates.extend(specialized_per_video)
                 continue
             for record in _read_structured_rows(path):
                 score = _extract_score(record, dimension)

@@ -82,6 +82,27 @@ def test_parse_vbench_outputs_collects_summary_and_per_video(tmp_path: Path):
     ]
 
 
+def test_parse_vbench_outputs_collects_summary_from_dimension_keyed_json(tmp_path: Path):
+    summary_dir = tmp_path / "dynamic_degree"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "results.json").write_text(
+        (
+            '{"dynamic_degree": [1.0, [{"video_path": "/model_a/sample_01.mp4", "video_results": true}, '
+            '{"video_path": "/model_a/sample_02.mp4", "video_results": true}]]}'
+        ),
+        encoding="utf-8",
+    )
+
+    results = parse_vbench_outputs(
+        tmp_path,
+        dimensions=["dynamic_degree"],
+        model_name="model_a",
+    )
+
+    assert results.summary_rows == [{"model": "model_a", "vbench.dynamic_degree": 1.0}]
+    assert results.per_video_rows == []
+
+
 def test_merge_vbench_results_into_existing_reports():
     model_summary = [{"model": "model_a", "num_videos": 2, "clip_f.mean.mean": 0.9}]
     vbench_summary = [{"model": "model_a", "vbench.aesthetic_quality": 0.88}]
