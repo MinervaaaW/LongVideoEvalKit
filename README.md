@@ -2,7 +2,7 @@
 
 `LongVideoEvalKit` is an extensible evaluation toolkit for long-video generation experiments. v0.1 focuses on a stable, runnable pipeline rather than a full benchmark leaderboard.
 
-For a detailed explanation of every metric, formulas, and multi-metric analysis strategies, see [introduction.md](./introduction.md). A Chinese version is available at [介绍.md](./介绍.md). For local-only model cache setup, download URLs, expected `~/.cache` layout, and the code locations that consume each checkpoint, see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md).
+For a detailed explanation of every metric, formulas, and multi-metric analysis strategies, see [introduction.md](./introduction.md). A Chinese version is available at [介绍.md](./介绍.md). For local-only model cache setup, download URLs, expected `~/.cache` layout, and the code locations that consume each checkpoint, see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md). For the detailed TODO-style development plan, see [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md).
 
 It provides:
 
@@ -327,25 +327,12 @@ Notes:
 
 ## Development roadmap
 
-v0.1:
+The roadmap now lives in [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md).
 
-- stable package structure;
-- video reading, sampling, segmentation;
-- feature-based long-range consistency;
-- drift/repetition/degradation metrics;
-- runtime merging;
-- JSONL/CSV output.
+High-level milestones:
 
-v0.2:
-
-- HTML report;
-- time-curve plots;
-- calibrated repetition thresholds;
-- bootstrap confidence intervals.
-
-v1.0:
-
-- VLM judge;
-- human 2AFC / Likert / ELO-K32;
-- leaderboard format;
-- benchmark prompt suite and reproducibility cards.
+- `v0.1`: stabilize and test the currently implemented pipeline, including native CLIP, native DINOv2, and integrated official VBench.
+- `v0.2`: improve reporting, diagnostics, and confidence estimates.
+- `v0.3`: integrate `VBench-Long`.
+- `v0.4`: evaluate broader `VBench++` modules such as `VBench-I2V` and trustworthiness tracks.
+- `v1.0`: benchmark productization, judge models, and leaderboard-ready reproducibility.
