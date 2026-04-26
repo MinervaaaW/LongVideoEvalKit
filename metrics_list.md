@@ -1,0 +1,38 @@
+| 状态 | 指标名称 | 计算方式 | Bench 工具库 / 核对来源 | 当前代码输出字段名 |
+|---|---|---|---|---|
+| ✓ | Metadata（视频元信息） | 直接读取视频基础属性：时长、原始 fps、帧数、分辨率。 | 仓内原生实现。 | `metadata.duration_sec`, `metadata.video_fps`, `metadata.num_frames`, `metadata.width`, `metadata.height` |
+| ✓ | Quality Proxy（仓内代理质量） | 逐帧用 `0.7 * sharpness + 0.3 * exposure_score` 计算轻量级无参考代理质量，再在 segment 上聚合。不是 MUSIQ，也不是官方 VBench Imaging Quality。 | 仓内原生实现，[quality_proxy.py](/home/wangm/causal-forcing-it2v/longvideo_evalkit_v0_1/longvideo_eval/metrics/quality_proxy.py:9) | `quality_proxy.mean`, `quality_proxy.head`, `quality_proxy.tail`, `quality_proxy.segment_std`, `quality_proxy.delta_abs`, `quality_proxy.delta_drop` |
+| ✓ | ColorHist Long Consistency（仓内原生） | 先提取帧级颜色直方图特征，再做 segment mean feature，最后计算各 segment 相对首 segment 的余弦相似度。 | 仓内原生实现，[long_consistency.py](/home/wangm/causal-forcing-it2v/longvideo_evalkit_v0_1/longvideo_eval/metrics/long_consistency.py:21) | `colorhist_lc.mean`, `colorhist_lc.end`, `colorhist_lc.drop` |
+| ✓ | ColorHist Drift（仓内原生） | 基于颜色直方图 segment feature，计算各 segment 相对首 segment 的 `1-cos` 漂移。 | 仓内原生实现。 | `drift_colorhist.mean`, `drift_colorhist.end`, `drift_colorhist.max` |
+| ✓ | ColorHist Repetition（仓内原生） | 在满足 `min_gap_segments` 的远距离 segment 对上，计算颜色直方图相似度，并统计均值 / 最大值 / 超阈值比例。 | 仓内原生实现。 | `repetition_colorhist.ratio`, `repetition_colorhist.mean_sim`, `repetition_colorhist.max_sim`, `repetition_colorhist.num_pairs` |
+| ○ | Total Score（新增） | 使用官方 VBench / VBench-Long / VBench++ 对多个子指标按官方权重聚合；复现时建议直接报告官方输出。 | 可：官方 `VBench` / `VBench++`；当前代码未实现该聚合。 | `无` |
+| ○ | Quality Score（新增） | 由 Subject / Background / Flickering / Motion Smoothness / Dynamic Degree / Aesthetic / Imaging 等质量类子项按官方权重聚合。 | 可：官方 `VBench` / `VBench++`；当前代码未实现该聚合。 | `无` |
+| ○ | Semantic Score（新增） | 由 Object Class、Multiple Objects、Human Action、Color、Spatial Relationship、Scene、Temporal Style、Appearance Style、Overall Consistency 等语义类维度按官方权重聚合。 | 可：官方 `VBench` / `VBench++`；当前代码未实现该聚合。 | `无` |
+| ✓ | Aesthetic Quality（美学质量） | 对帧级美学分数取平均，可记为 `AQ(v)=1/T * sum_t s_LAION(I_t)`。高越好。 | 可：官方 `VBench`；当前代码通过 `vbench_wrapper` 直接调用官方实现。 | `vbench.aesthetic_quality` |
+| ✓ | Imaging Quality（成像质量） | 对帧级画质分数取平均，可记为 `IQ(v)=1/T * sum_t s_MUSIQ(I_t)`。高越好。 | 可：官方 `VBench`；当前代码通过 `vbench_wrapper` 直接调用官方实现。 | `vbench.imaging_quality` |
+| ○ | Temporal Flickering（时序闪烁） | 使用官方 VBench temporal flickering 实现，衡量相邻帧非运动解释的亮度 / 纹理闪烁。高分表示闪烁少。 | 可：官方 `VBench`；但当前 `vbench_wrapper` 只接了 6 个 custom-input 维度，不含此项。 | `无` |
+| ✓ | Subject Consistency（主体一致性） | 官方 VBench-Long 定义为跨帧主体特征相似度；Relax Forcing 附录写明该项按 DINO feature similarity across frames 计算。高越好。 | 可：官方 `VBench-Long`；当前代码通过 `vbench_wrapper` 调官方 `subject_consistency`。 | `vbench.subject_consistency` |
+| ✓ | Background Consistency（背景一致性） | 官方 VBench-Long 定义为背景 / 场景跨帧相似度；Relax Forcing 附录写明该项按 CLIP feature similarity across frames 计算。高越好。 | 可：官方 `VBench-Long`；当前代码通过 `vbench_wrapper` 调官方 `background_consistency`。 | `vbench.background_consistency` |
+| ○ | Overall Consistency（整体一致性） | 使用官方 VBench overall consistency；Deep Forcing 文中说明该项依赖 ViCLIP。高越好。 | 可：官方 `VBench`；但当前 `vbench_wrapper` 不支持此维度。 | `无` |
+| ✓ | Motion Smoothness（运动流畅度） | 使用视频帧插值先验评估运动是否平滑自然。高越好。 | 可：官方 `VBench-Long`；当前代码通过 `vbench_wrapper` 调官方 `motion_smoothness`。 | `vbench.motion_smoothness` |
+| ✓ | Dynamic Degree（动态程度） | 用 RAFT 光流衡量跨帧运动幅度。高越好。 | 可：官方 `VBench-Long`；当前代码通过 `vbench_wrapper` 调官方 `dynamic_degree`。 | `vbench.dynamic_degree` |
+| ◐ | ΔIQ / Quality Drift：首尾质量差 | 统一可写为 `ΔQ(v)=|Q(v_first5s)-Q(v_last5s)|`。低越好。注意不同论文的 `Q` 不同：Rolling Forcing 用 `Imaging Quality`，Deep Forcing 用 `Aesthetic Quality`。 | 无统一 bench；当前代码只有近似项 `quality_proxy.delta_abs / delta_drop`，不是论文里的 IQ / AQ。 | `quality_proxy.delta_abs`, `quality_proxy.delta_drop` |
+| ◐ | Imaging Quality Drift：分段标准差（新增） | 若把视频分段为 `c_1,...,c_n`，令 `q_i=IQ(c_i)`，则可定义 `Std(q_1,...,q_n)`。低越好。 | 无；当前代码只有近似项 `quality_proxy.segment_std`，但它基于 `quality_proxy` 而非 `IQ`。 | `quality_proxy.segment_std` |
+| ◐ | Drift：CLIP 首尾语义漂移 | 可写为 `Drift(v)=1-cos(phi_CLIP(v_first5s), phi_CLIP(v_last5s))`。低越好。 | 无统一 bench；当前代码实现的是“各 segment 相对首 segment”的 drift，不是只算首尾 5s。 | `drift_clip.mean`, `drift_clip.end`, `drift_clip.max` |
+| ◐ | Repetition（画面重复） | 可写为视频内各 clip 间 CLIP2CLIP 相似度平均：`Rep(v)=Avg_{i<j} cos(phi_CLIP(c_i), phi_CLIP(c_j))`。过高表示循环、冻结或语义重复。 | 无统一 bench；当前代码实现带 `min_gap_segments` 阈值过滤。 | `repetition_clip.ratio`, `repetition_clip.mean_sim`, `repetition_clip.max_sim`, `repetition_clip.num_pairs` |
+| ○ | Balance（均衡性） | `Balance = minmax(Drift) + minmax(Repetition)`。低越好，表示既不过度漂移，也不过度重复。 | 无统一 bench；Relax Forcing 正文与附录明确给出该归一化组合指标，但当前代码未实现。 | `无` |
+| ◐ | DINOv2 Score（按 Context Forcing 写法） | Context Forcing 的细粒度一致性指标。对任意时间点 `t`，在窗口 `[t-0.5s, t+0.5s]` 内，计算各帧与首帧 `V_0` 的 DINOv2 余弦相似度并取平均。高越好。 | 无统一 bench；当前代码实现的是 segment mean feature 版本，不是论文里的滑窗采样。 | `dinov2_lc.mean`, `dinov2_lc.end`, `dinov2_lc.drop` |
+| ✓ | DINOv2 Drift（仓内原生） | 基于 DINOv2 segment feature，计算各 segment 相对首 segment 的 `1-cos` 漂移。 | 仓内原生实现。 | `drift_dinov2.mean`, `drift_dinov2.end`, `drift_dinov2.max` |
+| ✓ | DINOv2 Repetition（仓内原生） | 基于 DINOv2 segment feature，在远距离 segment 对上统计重复相似度。 | 仓内原生实现。 | `repetition_dinov2.ratio`, `repetition_dinov2.mean_sim`, `repetition_dinov2.max_sim`, `repetition_dinov2.num_pairs` |
+| ◐ | CLIP-F（按 Context Forcing 写法） | Context Forcing 的语义上下文一致性指标。对任意时间点 `t`，在窗口 `[t-0.5s, t+0.5s]` 内，计算各帧与首帧 `V_0` 的 CLIP 图像特征余弦相似度并取平均。高越好。 | 无统一 bench；当前代码实现的是 segment mean feature、相对首 segment 的版本。 | `clip_f.mean`, `clip_f.end`, `clip_f.drop` |
+| ◐ | CLIP-T | Prompt 对齐指标。可写为对窗口 `[t-0.5s, t+0.5s]` 内各帧，计算 `cos(phi_CLIP^img(V_tau), phi_CLIP^txt(p))` 并取平均。高越好。 | 无统一 bench；当前代码实现的是 segment mean image feature 对 prompt text feature 的相似度。 | `clip_t.mean`, `clip_t.end`, `clip_t.drop` |
+| ○ | Visual Stability（视觉稳定性） | 用 VLM 判断长视频中曝光稳定性与退化程度，并把得分归一到 `0-100`。高越好。 | 无统一 bench；Deep Forcing 按 Self Forcing++ protocol，用 `Gemini 2.5-Pro` 打分并归一化；当前代码未实现。 | `无` |
+| ○ | Qwen3-VL Visual / Dynamic / Text Score（新增） | 记为 `Score_d = 1/N * sum_n s_{Qwen3-VL,d}(v_n, p_n)`，其中 `d` 可为 `Visual / Dynamic / Text`。高越好。 | 无；这四篇论文中未见该指标定义，当前代码也未实现。 | `无` |
+| ○ | 2AFC preference（二选一偏好） | `Pref(A)= #(A ≻ B) / #all comparisons`。高越好。 | 无统一 bench；Deep Forcing 明确使用 `2AFC` 人评协议，当前代码未实现。 | `无` |
+| ○ | ELO-K32（新增） | 每次 A/B 比较后按 Elo 更新：`R_A' = R_A + K(S_A-E_A)`，其中 `K=32`。最终分数高者偏好更强。 | 无；这四篇论文中未见该指标，当前代码也未实现。 | `无` |
+| ○ | Likert 1–4 人类评分（新增） | `Rating_d = 1/N * sum_n s_{n,d}`，`s in {1,2,3,4}`。高越好。 | 无；这四篇论文中未见该指标，当前代码也未实现。 | `无` |
+| ✓ | Runtime / Efficiency（sidecar 原始统计） | 直接读取 runtime sidecar 里的总耗时、峰值显存、KV cache、分阶段耗时等字段；仅在提供 runtime 文件时输出。 | 仓内原生 sidecar merge。 | `efficiency.runtime_sec`, `efficiency.gpu_mem_peak_gb`, `efficiency.kv_cache_gb`, `efficiency.denoise_sec`, `efficiency.decode_sec`, `efficiency.io_sec` |
+| ✓ | FPS / Throughput | `FPS = generated_frames / inference_seconds`。需要注明是否含 decode、I/O、warmup。 | 无统一 bench；当前代码在存在 runtime sidecar 时计算 `num_frames / runtime_sec`。 | `efficiency.generation_fps` |
+| ◐ | Latency（新增到这些论文中明确使用） | `Latency = t_output_ready - t_request_or_current_chunk_start`；可报告均值、P50、P95，或稳定滚动后的延迟。 | 无统一 bench；当前代码只透传 sidecar 里的 latency，不负责采集或聚合 P50/P95。 | `efficiency.latency_ms` |
+| ○ | Context Length / Effective Context Length（新增） | 常记为可稳定利用的历史上下文秒数，`Context Length = #context_frames / fps`。高不一定更好，要结合 drift / repetition。 | 无统一 bench；Context Forcing 论文直接报告 effective context length（20s+），当前代码未实现。 | `无` |
+| ○ | Object Class / Multiple Objects / Human Action / Color / Spatial Relationship / Scene / Temporal Style / Appearance Style（新增） | 全部使用官方 VBench 各维度脚本；不建议自行改公式。每个维度对应特定 prompt subset 与判别 / 匹配模型评分。高越好。 | 可：官方 `VBench` / `VBench++`；Rolling Forcing 明确说明 full semantic evaluation 用 official standardized scripts，但当前代码未接这些维度。 | `无` |
