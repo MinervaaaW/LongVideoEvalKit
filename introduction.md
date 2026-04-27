@@ -299,7 +299,145 @@ Interpretation:
 
 These are toolkit-native metrics, not VBench metrics.
 
-### 4.11 `efficiency.*`
+### 4.11 `paper.*`
+
+These fields implement the exact paper-style metrics that were added after v0.1, rather than the earlier lightweight proxies.
+
+They are designed to match the metric definitions commonly used in Context Forcing, Rolling Forcing, Deep Forcing, and Relax Forcing more closely.
+
+#### 4.11.1 `paper.aesthetic_quality_drift_abs`, `paper.imaging_quality_drift_abs`
+
+These are exact first-vs-last quality drift metrics.
+
+For a quality scorer `Q`, define:
+
+```text
+DeltaQ(v) = |Q(v_first_5s) - Q(v_last_5s)|
+```
+
+The toolkit computes two concrete variants:
+
+- `paper.aesthetic_quality_drift_abs`: uses official VBench `aesthetic_quality` on the first and last clips.
+- `paper.imaging_quality_drift_abs`: uses official VBench `imaging_quality` on the first and last clips.
+
+Interpretation:
+
+- Lower is better.
+- High values mean the ending quality differs substantially from the opening.
+- These are more faithful to the long-video literature than `quality_proxy.delta_abs`, because they use official quality scorers instead of a lightweight heuristic.
+
+Important note:
+
+- These fields are derived from official VBench scoring on extracted clips, but they are not direct whole-video `vbench.*` fields.
+
+#### 4.11.2 `paper.imaging_quality_drift_std`, `paper.imaging_quality_num_clips`
+
+This measures quality fluctuation over time instead of only start-vs-end drift.
+
+The video is partitioned into consecutive clips. For each clip `c_i`, official VBench `imaging_quality` is computed:
+
+```text
+q_i = IQ(c_i)
+paper.imaging_quality_drift_std = Std(q_1, ..., q_n)
+```
+
+Interpretation:
+
+- Lower is better.
+- High values indicate unstable quality over time, such as intermittent blur, artifact bursts, or exposure oscillation.
+- `paper.imaging_quality_num_clips` records how many clips contributed to the standard deviation.
+
+#### 4.11.3 `paper.drift_clip_first_last`
+
+This is the exact CLIP first-vs-last semantic drift metric:
+
+```text
+Drift(v) = 1 - cos(phi_CLIP(v_first_5s), phi_CLIP(v_last_5s))
+```
+
+Here each clip feature is computed by averaging frame-level CLIP image embeddings within the clip and then normalizing.
+
+Interpretation:
+
+- Lower is better.
+- This is stricter than `drift_clip.end` because it compares explicit first and last clips rather than averaging over all later segments.
+
+#### 4.11.4 `paper.repetition_clip_global`, `paper.repetition_clip_global.num_pairs`
+
+This is a global CLIP repetition metric over clip pairs:
+
+```text
+Rep(v) = Avg_{i<j} cos(phi_CLIP(c_i), phi_CLIP(c_j))
+```
+
+Interpretation:
+
+- Higher values mean the video revisits similar semantic states more often.
+- Very high repetition can indicate looping, freezing, or semantic recycling.
+- `paper.repetition_clip_global.num_pairs` records the number of clip pairs used.
+
+Compared with `repetition_clip.*`, this metric is closer to the paper-style all-pairs formulation and does not depend on a similarity threshold.
+
+#### 4.11.5 `paper.balance.mean`
+
+This implements the Relax Forcing-style balance metric:
+
+```text
+Balance = minmax(Drift) + minmax(Repetition)
+```
+
+Interpretation:
+
+- Lower is better.
+- A model with low drift but extremely high repetition is not truly good.
+- A model with low repetition but very high drift is also not good.
+- This metric captures the tradeoff between those two failure modes.
+
+Important note:
+
+- `paper.balance.mean` is computed at the model-summary level, not as a raw per-video primitive.
+- Because it uses min-max scaling, it is only meaningful when comparing models within the same evaluation batch.
+
+#### 4.11.6 `paper.dinov2_cf.*`
+
+These fields implement the Context Forcing-style DINOv2 consistency metric using window-based sampling.
+
+For each evaluation time `t`, define a centered window `[t-0.5s, t+0.5s]`. Let `V_0` be the first frame and `V_tau` be frames inside that window:
+
+```text
+DINOv2(t) = Avg_{tau in [t-0.5s, t+0.5s]} cos(phi_DINO(V_tau), phi_DINO(V_0))
+```
+
+The toolkit reports:
+
+- `paper.dinov2_cf.mean`
+- `paper.dinov2_cf.end`
+- `paper.dinov2_cf.drop`
+
+Interpretation:
+
+- High values mean the video remains structurally similar to the opening frame under the Context Forcing protocol.
+- Compared with `dinov2_lc.*`, this version is closer to the paper definition because it uses frame-centered local windows instead of segment-mean features alone.
+
+#### 4.11.7 Comparison with earlier toolkit proxies
+
+The exact paper-style metrics do not make the earlier toolkit-native metrics obsolete. They serve different roles.
+
+| Exact paper-style metric | Earlier toolkit metric | Main similarity | Main difference | Recommended use |
+|---|---|---|---|---|
+| `paper.aesthetic_quality_drift_abs` / `paper.imaging_quality_drift_abs` | `quality_proxy.delta_abs`, `quality_proxy.delta_drop` | Both measure start-vs-end quality change. | `paper.*` uses official VBench quality scorers on extracted clips; `quality_proxy.*` uses a lightweight sharpness/exposure heuristic on sampled frames. | Use `paper.*` for benchmarking and paper-style reporting; use `quality_proxy.*` for cheap debugging. |
+| `paper.imaging_quality_drift_std` | `quality_proxy.segment_std` | Both measure quality fluctuation over time. | `paper.*` uses official `imaging_quality`; `quality_proxy.*` uses the lightweight proxy. | Prefer `paper.*` when quality rigor matters. |
+| `paper.drift_clip_first_last` | `drift_clip.end` | Both describe semantic change from the beginning toward the end. | `paper.*` compares explicit first and last clips only; `drift_clip.end` comes from the segment-vs-first-segment formulation. | Use `paper.*` for exact first-last drift; keep `drift_clip.*` for richer temporal diagnostics. |
+| `paper.repetition_clip_global` | `repetition_clip.mean_sim`, `repetition_clip.ratio`, `repetition_clip.max_sim` | Both measure semantic repetition across time. | `paper.*` is an all-pairs clip-average without thresholds; `repetition_clip.*` uses distant-pair filtering and can expose thresholded repetition events. | Use `paper.*` for paper-style repetition score; use `repetition_clip.*` to inspect looping behavior in more detail. |
+| `paper.dinov2_cf.*` | `dinov2_lc.*` | Both use DINOv2 to measure long-range structural consistency. | `paper.*` follows the Context Forcing window-centered protocol against the first frame; `dinov2_lc.*` compares segment-mean features against the first segment. | Use `paper.*` when matching Context Forcing; use `dinov2_lc.*` for a simpler stable proxy. |
+| `paper.balance.mean` | none | none | `paper.balance.mean` is a new derived summary metric combining drift and repetition after min-max normalization. | Use only for within-batch model comparison, not as a standalone per-video score. |
+
+Practical rule of thumb:
+
+- If you are writing a paper table, prefer the `paper.*` fields.
+- If you are diagnosing why a model failed, keep the older proxy fields as supporting evidence.
+
+### 4.12 `efficiency.*`
 
 These fields are derived from an optional runtime sidecar JSONL file.
 
@@ -319,7 +457,7 @@ Interpretation:
 - These metrics measure cost, not output quality.
 - They become most useful when paired with quality or consistency metrics to analyze efficiency-quality tradeoffs.
 
-### 4.12 `vbench.*`
+### 4.13 `vbench.*`
 
 These fields come from official VBench. The toolkit does not reimplement them. Instead, it invokes official VBench in `custom_input` mode, stores the raw artifacts, and merges standardized `vbench.*` columns back into toolkit reports.
 
@@ -359,6 +497,7 @@ Compare:
 - `clip_f.*` and `drift_clip.*`
 - `colorhist_lc.*` and `drift_colorhist.*`
 - optionally `dinov2_lc.*` and `drift_dinov2.*`
+- for exact paper-style consistency, optionally `paper.dinov2_cf.*`
 
 Typical patterns:
 
@@ -391,6 +530,9 @@ Typical patterns:
 
 Compare:
 
+- `paper.aesthetic_quality_drift_abs`
+- `paper.imaging_quality_drift_abs`
+- `paper.imaging_quality_drift_std`
 - `quality_proxy.head`
 - `quality_proxy.tail`
 - `quality_proxy.delta_drop`
@@ -399,6 +541,10 @@ Compare:
 
 Typical patterns:
 
+- large `paper.imaging_quality_drift_abs` or `paper.aesthetic_quality_drift_abs`:
+  the end of the video is noticeably worse than the beginning under official quality scorers.
+- large `paper.imaging_quality_drift_std`:
+  quality fluctuates throughout the video, even if the start and end happen to look similar on average.
 - large positive `quality_proxy.delta_drop` with rising semantic drift:
   later segments are both lower quality and more semantically unstable.
 - large `quality_proxy.segment_std` with modest drift:
@@ -417,6 +563,8 @@ When official VBench is available:
 
 Compare:
 
+- `paper.repetition_clip_global`
+- `paper.balance.mean` when comparing multiple models
 - `repetition_clip.*`
 - `repetition_colorhist.*`
 - `clip_f.*`
@@ -426,6 +574,8 @@ Typical patterns:
 
 - high repetition and extremely high `clip_f`:
   the model may be nearly frozen, repeating the same visual state.
+- low `paper.drift_clip_first_last` but high `paper.repetition_clip_global`:
+  the model may preserve the opening semantics mainly by not evolving enough.
 - high `repetition_clip` with moderate or low `clip_f`:
   the video may cycle among a small set of semantic states.
 - high `repetition_colorhist` but lower `repetition_clip`:
@@ -444,6 +594,8 @@ Watch:
 
 - `clip_f.drop`
 - `clip_t.drop`
+- `paper.aesthetic_quality_drift_abs`
+- `paper.imaging_quality_drift_abs`
 - `quality_proxy.delta_drop`
 - `drift_clip.end`
 
@@ -497,6 +649,7 @@ Therefore:
 - `quality_proxy.*` is not VBench `imaging_quality`.
 - `clip_t.*` is not official VBench text alignment.
 - `clip_f.*`, `colorhist_lc.*`, `drift_*`, `repetition_*`, `dinov2_*` are all toolkit-native proxies.
+- `paper.*` fields are paper-style derived metrics. Some of them reuse official VBench clip-level scorers, but they are still derived toolkit outputs rather than native whole-video `vbench.*` fields.
 
 If you run official VBench through the wrapper or through `longvideo-eval run --enable-vbench`, those imported fields should be labeled explicitly, for example:
 

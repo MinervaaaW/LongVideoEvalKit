@@ -34,6 +34,9 @@ class MetricConfig:
     colorhist: bool = True
     clip: bool = False
     dinov2: bool = False
+    paper_metrics: bool = False
+    paper_quality_clip_seconds: float = 5.0
+    paper_cf_window_radius_seconds: float = 0.5
     repetition_min_gap_segments: int = 5
     repetition_threshold: float = 0.95
 
@@ -99,6 +102,23 @@ def _validate_model_config(models: ModelConfig) -> None:
             )
 
 
+def _validate_metric_config(metrics: MetricConfig) -> None:
+    if metrics.paper_quality_clip_seconds <= 0:
+        raise ValueError("metrics.paper_quality_clip_seconds must be positive")
+    if metrics.paper_cf_window_radius_seconds < 0:
+        raise ValueError("metrics.paper_cf_window_radius_seconds must be non-negative")
+    if metrics.repetition_min_gap_segments < 0:
+        raise ValueError("metrics.repetition_min_gap_segments must be non-negative")
+    if not (0.0 <= metrics.repetition_threshold <= 1.0):
+        raise ValueError("metrics.repetition_threshold must be between 0 and 1")
+
+
+def _normalize_metric_config(metrics: MetricConfig) -> None:
+    if metrics.paper_metrics:
+        metrics.clip = True
+        metrics.dinov2 = True
+
+
 def _validate_vbench_config(vbench: VBenchConfig) -> None:
     if not vbench.command:
         raise ValueError("VBench command must be non-empty")
@@ -156,6 +176,8 @@ def load_config(path: str | Path) -> EvalConfig:
         ),
     )
     _validate_dataset_config(cfg.dataset)
+    _normalize_metric_config(cfg.metrics)
+    _validate_metric_config(cfg.metrics)
     _validate_model_config(cfg.models)
     _validate_vbench_config(cfg.vbench)
     return cfg
@@ -192,6 +214,12 @@ def build_config_from_args(args: Any) -> EvalConfig:
             cfg.metrics.clip = True
         if args.enable_dinov2:
             cfg.metrics.dinov2 = True
+        if args.enable_paper_metrics:
+            cfg.metrics.paper_metrics = True
+        if args.paper_quality_clip_seconds is not None:
+            cfg.metrics.paper_quality_clip_seconds = args.paper_quality_clip_seconds
+        if args.paper_cf_window_radius_seconds is not None:
+            cfg.metrics.paper_cf_window_radius_seconds = args.paper_cf_window_radius_seconds
         if args.clip_model:
             cfg.models.clip_model = args.clip_model
         if args.clip_pretrained:
@@ -215,6 +243,8 @@ def build_config_from_args(args: Any) -> EvalConfig:
         if args.vbench_raw_output_subdir:
             cfg.vbench.raw_output_subdir = args.vbench_raw_output_subdir
         _validate_dataset_config(cfg.dataset)
+        _normalize_metric_config(cfg.metrics)
+        _validate_metric_config(cfg.metrics)
         _validate_model_config(cfg.models)
         _validate_vbench_config(cfg.vbench)
         return cfg
@@ -243,6 +273,11 @@ def build_config_from_args(args: Any) -> EvalConfig:
             colorhist=not args.disable_colorhist,
             clip=args.enable_clip,
             dinov2=args.enable_dinov2,
+            paper_metrics=args.enable_paper_metrics,
+            paper_quality_clip_seconds=args.paper_quality_clip_seconds if args.paper_quality_clip_seconds is not None else 5.0,
+            paper_cf_window_radius_seconds=(
+                args.paper_cf_window_radius_seconds if args.paper_cf_window_radius_seconds is not None else 0.5
+            ),
             repetition_min_gap_segments=args.repetition_min_gap_segments,
             repetition_threshold=args.repetition_threshold,
         ),
@@ -264,6 +299,8 @@ def build_config_from_args(args: Any) -> EvalConfig:
         ),
     )
     _validate_dataset_config(cfg.dataset)
+    _normalize_metric_config(cfg.metrics)
+    _validate_metric_config(cfg.metrics)
     _validate_model_config(cfg.models)
     _validate_vbench_config(cfg.vbench)
     return cfg

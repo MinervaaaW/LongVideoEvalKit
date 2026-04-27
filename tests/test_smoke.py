@@ -77,6 +77,9 @@ def test_build_config_from_args_prompt_dir():
         disable_colorhist = False
         enable_clip = True
         enable_dinov2 = False
+        enable_paper_metrics = False
+        paper_quality_clip_seconds = None
+        paper_cf_window_radius_seconds = None
         clip_model = "ViT-B-32"
         clip_pretrained = "laion2b_s34b_b79k"
         clip_backend = "openai_clip"
@@ -123,6 +126,9 @@ def test_build_config_from_args_uses_local_model_defaults():
         disable_colorhist = False
         enable_clip = False
         enable_dinov2 = False
+        enable_paper_metrics = False
+        paper_quality_clip_seconds = None
+        paper_cf_window_radius_seconds = None
         clip_model = None
         clip_pretrained = None
         clip_backend = None
@@ -143,6 +149,49 @@ def test_build_config_from_args_uses_local_model_defaults():
     assert cfg.models.clip_model == "ViT-B/32"
     assert cfg.models.clip_cache_dir == default_clip_cache_dir()
     assert cfg.models.dinov2_model == default_dinov2_model_dir()
+
+
+def test_build_config_from_args_paper_metrics_auto_enable_exact_dependencies():
+    class Args:
+        config = None
+        video_root = "./videos"
+        prompt_file = None
+        prompt_dir = "./prompt"
+        runtime_file = None
+        output_dir = "./outputs"
+        dataset_layout = "prompt_dirs"
+        model_name = "demo_model"
+        video_selection = "latest"
+        sample_fps = None
+        segment_seconds = None
+        max_segments = None
+        max_frames_per_segment = 8
+        disable_quality_proxy = False
+        disable_colorhist = False
+        enable_clip = False
+        enable_dinov2 = False
+        enable_paper_metrics = True
+        paper_quality_clip_seconds = 5.0
+        paper_cf_window_radius_seconds = 0.5
+        clip_model = None
+        clip_pretrained = None
+        clip_backend = None
+        clip_repo = None
+        clip_cache_dir = None
+        dinov2_model = None
+        repetition_min_gap_segments = 5
+        repetition_threshold = 0.95
+        enable_vbench = False
+        vbench_dimensions = None
+        vbench_command = None
+        vbench_mode = None
+        vbench_raw_output_subdir = None
+
+    cfg = build_config_from_args(Args())
+
+    assert cfg.metrics.paper_metrics is True
+    assert cfg.metrics.clip is True
+    assert cfg.metrics.dinov2 is True
 
 
 def test_openai_clip_extractor_with_fake_clip(monkeypatch, tmp_path: Path):

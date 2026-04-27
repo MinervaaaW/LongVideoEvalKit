@@ -10,14 +10,23 @@ import numpy as np
 from tqdm import tqdm
 
 from longvideo_eval.config import EvalConfig
+from longvideo_eval.io.video_clipper import extract_named_time_clips
 from longvideo_eval.io.prompt_loader import load_prompts
 from longvideo_eval.io.runtime_loader import load_runtime_sidecar
 from longvideo_eval.io.video_reader import list_video_records, read_video_sampled, segment_indices
 from longvideo_eval.metrics.efficiency import compute_efficiency
 from longvideo_eval.metrics.long_consistency import (
     clip_t_from_segments,
+    compute_metric_bundle_from_frame_features,
     compute_image_feature_metric_bundle,
     segment_mean_features,
+)
+from longvideo_eval.metrics.paper_metrics import (
+    add_balance_to_summary_rows,
+    build_named_quality_clip_specs,
+    compute_clip_first_last_drift,
+    compute_clip_global_repetition,
+    compute_context_forcing_window_consistency,
 )
 from longvideo_eval.metrics.quality_proxy import compute_quality_proxy
 from longvideo_eval.metrics.vbench_wrapper import (
@@ -136,6 +145,90 @@ def _run_vbench_and_merge(
     return rows, summary
 
 
+def _merge_exact_paper_quality_metrics(
+    cfg: EvalConfig,
+    rows: List[Dict[str, Any]],
+    out_dir: Path,
+) -> List[Dict[str, Any]]:
+    ok_rows = [(idx, row) for idx, row in enumerate(rows) if row.get("status") == "ok"]
+    if not ok_rows:
+        return rows
+
+    clip_root = out_dir / "paper_quality_clips"
+    raw_root = out_dir / "paper_quality_vbench_raw"
+    clip_lookup: dict[tuple[str, str], tuple[int, str]] = {}
+    staged_models: dict[str, Path] = {}
+
+    for row_idx, row in ok_rows:
+        duration = float(row.get("metadata.duration_sec", 0.0) or 0.0)
+        if duration <= 0:
+            continue
+        model = str(row["model"])
+        video_path = Path(str(row["video_path"]))
+        model_dir = clip_root / model
+        model_dir.mkdir(parents=True, exist_ok=True)
+        specs = build_named_quality_clip_specs(
+            base_name=f"{row_idx:06d}__{video_path.stem}",
+            duration_sec=duration,
+            head_tail_seconds=cfg.metrics.paper_quality_clip_seconds,
+            segment_seconds=cfg.sampling.segment_seconds,
+            max_segments=cfg.sampling.max_segments,
+        )
+        created = extract_named_time_clips(video_path, model_dir, specs)
+        if created:
+            staged_models[model] = model_dir
+        for spec in specs:
+            if spec.name in created:
+                clip_lookup[(model, spec.name)] = (row_idx, spec.tag)
+
+    if not staged_models:
+        return rows
+
+    accumulators: dict[int, dict[str, Any]] = {}
+    for model, model_dir in sorted(staged_models.items()):
+        model_out_dir = raw_root / model
+        _, results = run_and_collect_vbench(
+            video_root=model_dir,
+            output_dir=model_out_dir,
+            dimensions=["aesthetic_quality", "imaging_quality"],
+            model_name=model,
+            command=cfg.vbench.command,
+            mode=cfg.vbench.mode,
+        )
+        for item in results.per_video_rows:
+            clip_stem = str(item.get("video_stem") or "")
+            key = (model, clip_stem)
+            if key not in clip_lookup:
+                continue
+            row_idx, tag = clip_lookup[key]
+            bucket = accumulators.setdefault(row_idx, {"iq_segments": []})
+            if "vbench.aesthetic_quality" in item:
+                if tag == "head":
+                    bucket["aq_head"] = float(item["vbench.aesthetic_quality"])
+                elif tag == "tail":
+                    bucket["aq_tail"] = float(item["vbench.aesthetic_quality"])
+            if "vbench.imaging_quality" in item:
+                score = float(item["vbench.imaging_quality"])
+                if tag == "head":
+                    bucket["iq_head"] = score
+                elif tag == "tail":
+                    bucket["iq_tail"] = score
+                elif tag.startswith("seg_"):
+                    bucket["iq_segments"].append(score)
+
+    for row_idx, bucket in accumulators.items():
+        row = rows[row_idx]
+        if "aq_head" in bucket and "aq_tail" in bucket:
+            row["paper.aesthetic_quality_drift_abs"] = float(abs(bucket["aq_head"] - bucket["aq_tail"]))
+        if "iq_head" in bucket and "iq_tail" in bucket:
+            row["paper.imaging_quality_drift_abs"] = float(abs(bucket["iq_head"] - bucket["iq_tail"]))
+        if bucket.get("iq_segments"):
+            arr = np.array(bucket["iq_segments"], dtype=np.float32)
+            row["paper.imaging_quality_drift_std"] = float(arr.std(ddof=0))
+            row["paper.imaging_quality_num_clips"] = float(len(arr))
+    return rows
+
+
 def run_eval(cfg: EvalConfig) -> List[Dict[str, Any]]:
     prompts = load_prompts(cfg.dataset.prompt_file, cfg.dataset.prompt_dir)
     runtime = load_runtime_sidecar(cfg.dataset.runtime_file)
@@ -246,12 +339,28 @@ def run_eval(cfg: EvalConfig) -> List[Dict[str, Any]]:
                 if prompt_rec is not None and prompt_rec.prompt:
                     text_feat = clip.encode_texts([prompt_rec.prompt])[0]
                     row.update(clip_t_from_segments(clip_seg_feats, text_feat, "clip_t"))
+                if cfg.metrics.paper_metrics:
+                    row.update(
+                        compute_clip_first_last_drift(
+                            clip_features,
+                            timestamps,
+                            clip_seconds=cfg.metrics.paper_quality_clip_seconds,
+                        )
+                    )
+                    row.update(
+                        compute_clip_global_repetition(
+                            clip_features,
+                            timestamps,
+                            clip_seconds=cfg.sampling.segment_seconds,
+                            max_clips=cfg.sampling.max_segments,
+                        )
+                    )
 
             if dinov2 is not None:
-                metrics, _ = compute_image_feature_metric_bundle(
-                    frames=frames,
+                dinov2_features = dinov2.encode_images(list(frames))
+                metrics, _ = compute_metric_bundle_from_frame_features(
+                    dinov2_features,
                     segments=segments,
-                    extractor=dinov2,
                     prefix="dinov2",
                     repetition_min_gap_segments=cfg.metrics.repetition_min_gap_segments,
                     repetition_threshold=cfg.metrics.repetition_threshold,
@@ -264,6 +373,15 @@ def run_eval(cfg: EvalConfig) -> List[Dict[str, Any]]:
                         row[k] = v
                     elif k.startswith("repetition_dinov2"):
                         row[k] = v
+                if cfg.metrics.paper_metrics:
+                    row.update(
+                        compute_context_forcing_window_consistency(
+                            dinov2_features,
+                            timestamps,
+                            window_radius_seconds=cfg.metrics.paper_cf_window_radius_seconds,
+                            prefix="paper.dinov2_cf",
+                        )
+                    )
 
             row["status"] = "ok"
             rows.append(row)
@@ -273,7 +391,12 @@ def run_eval(cfg: EvalConfig) -> List[Dict[str, Any]]:
             errors.append({**row, "traceback": traceback.format_exc()})
             rows.append(row)
 
+    if cfg.metrics.paper_metrics:
+        rows = _merge_exact_paper_quality_metrics(cfg, rows, out_dir)
+
     summary = summarize_by_model([r for r in rows if r.get("status") == "ok"])
+    if cfg.metrics.paper_metrics:
+        summary = add_balance_to_summary_rows(summary)
     if cfg.vbench.enabled:
         rows, summary = _run_vbench_and_merge(cfg, raw_records, rows, summary, out_dir)
     write_jsonl(rows, out_dir / "per_video_metrics.jsonl")

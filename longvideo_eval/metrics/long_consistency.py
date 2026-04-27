@@ -88,16 +88,12 @@ def clip_t_from_segments(
     }
 
 
-def compute_image_feature_metric_bundle(
-    frames: np.ndarray,
-    segments: Sequence[np.ndarray],
-    extractor: FeatureExtractor,
+def compute_metric_bundle_from_segment_features(
+    segment_feats: np.ndarray,
     prefix: str,
     repetition_min_gap_segments: int,
     repetition_threshold: float,
-) -> tuple[Dict[str, float], np.ndarray]:
-    features = extractor.encode_images(list(frames))
-    segment_feats = segment_mean_features(features, segments)
+) -> Dict[str, float]:
     out: Dict[str, float] = {}
     out.update(long_consistency_from_features(segment_feats, f"{prefix}_lc"))
     out.update(drift_from_features(segment_feats, f"drift_{prefix}"))
@@ -109,4 +105,41 @@ def compute_image_feature_metric_bundle(
             threshold=repetition_threshold,
         )
     )
-    return out, segment_feats
+    return out
+
+
+def compute_metric_bundle_from_frame_features(
+    features: np.ndarray,
+    segments: Sequence[np.ndarray],
+    prefix: str,
+    repetition_min_gap_segments: int,
+    repetition_threshold: float,
+) -> tuple[Dict[str, float], np.ndarray]:
+    segment_feats = segment_mean_features(features, segments)
+    return (
+        compute_metric_bundle_from_segment_features(
+            segment_feats,
+            prefix=prefix,
+            repetition_min_gap_segments=repetition_min_gap_segments,
+            repetition_threshold=repetition_threshold,
+        ),
+        segment_feats,
+    )
+
+
+def compute_image_feature_metric_bundle(
+    frames: np.ndarray,
+    segments: Sequence[np.ndarray],
+    extractor: FeatureExtractor,
+    prefix: str,
+    repetition_min_gap_segments: int,
+    repetition_threshold: float,
+) -> tuple[Dict[str, float], np.ndarray]:
+    features = extractor.encode_images(list(frames))
+    return compute_metric_bundle_from_frame_features(
+        features,
+        segments=segments,
+        prefix=prefix,
+        repetition_min_gap_segments=repetition_min_gap_segments,
+        repetition_threshold=repetition_threshold,
+    )

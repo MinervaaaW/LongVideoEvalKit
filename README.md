@@ -12,6 +12,7 @@ It provides:
 - CLIP-F / CLIP-T with either `open_clip_torch` or OpenAI `clip`;
 - DINOv2 long consistency when `transformers` weights are available;
 - drift, repetition, start-end quality degradation, segment quality standard deviation;
+- exact paper-style metrics for quality drift, CLIP first-last drift, global repetition, Relax Forcing balance, and Context Forcing DINOv2;
 - efficiency/statistics merging from a sidecar runtime file;
 - dataset coverage reporting for missing prompts;
 - CSV / JSONL reports;
@@ -151,6 +152,21 @@ conda run -n eval longvideo-eval run \
   --clip-model ViT-B/32
 ```
 
+Enable the exact paper-style metrics:
+
+```bash
+conda run -n eval longvideo-eval run \
+  --video-root ./test_model_perf_161output \
+  --prompt-dir ./test_model_perf/prompt \
+  --dataset-layout prompt_dirs \
+  --model-name test_model_perf_161output \
+  --video-selection latest \
+  --output-dir ./outputs/test_model_perf_paper_metrics \
+  --enable-paper-metrics \
+  --paper-quality-clip-seconds 5 \
+  --paper-cf-window-radius-seconds 0.5
+```
+
 Enable official VBench and merge `vbench.*` fields into the same report:
 
 ```bash
@@ -217,6 +233,22 @@ Require `transformers` and a local DINOv2 checkpoint directory:
 
 - `dinov2_lc.mean`, `dinov2_lc.end`, `dinov2_lc.drop`;
 - `drift_dinov2.mean`, `drift_dinov2.end`.
+
+### Optional exact paper-style metrics
+
+Enable with `--enable-paper-metrics`.
+
+This mode automatically enables CLIP and DINOv2, and adds:
+
+- `paper.aesthetic_quality_drift_abs`
+- `paper.imaging_quality_drift_abs`
+- `paper.imaging_quality_drift_std`
+- `paper.drift_clip_first_last`
+- `paper.repetition_clip_global`
+- `paper.dinov2_cf.mean`, `paper.dinov2_cf.end`, `paper.dinov2_cf.drop`
+- `paper.balance.mean` in `model_summary.csv`
+
+These metrics are documented in detail in [introduction.md](./introduction.md) and [介绍.md](./介绍.md).
 
 ### Optional official VBench columns
 
