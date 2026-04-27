@@ -2,6 +2,16 @@
 
 This repository is now configured for local-only model loading during evaluation. Runtime downloads are no longer the default path for CLIP, DINOv2, or the integrated official VBench dimensions.
 
+In addition to the prompt-aware long-video pipeline, the repository also includes a paired GT-vs-pred evaluation workflow exposed through:
+
+- `longvideo-eval paired-run`
+
+That workflow depends on:
+
+- bundled FVD I3D weights inside `paired_videos_metrics/`
+- LPIPS linear weights inside `paired_videos_metrics/lpips/weights/`
+- torchvision ImageNet backbone cache for LPIPS, typically under `~/.cache/torch/hub/checkpoints/`
+
 ## Code Locations
 
 Toolkit-native model loading:
@@ -16,6 +26,18 @@ Toolkit-native model loading:
   - default local paths for `clip_cache_dir`, `dinov2_model`, and the default `openai_clip` backend
 - `longvideo_eval/model_defaults.py`
   - shared cache path defaults and VBench asset layout
+
+Paired GT-vs-pred metric loading:
+
+- `paired_videos_metrics/batch_eval_paired_videos.py`
+  - paired evaluation entrypoint used by `longvideo-eval paired-run`
+- `paired_videos_metrics/fvd/styleganv/fvd.py`
+  - loads the bundled `i3d_torchscript.pt`
+- `paired_videos_metrics/fvd/videogpt/fvd.py`
+  - loads the bundled `i3d_pretrained_400.pt`
+- `paired_videos_metrics/lpips/lpips.py`
+  - loads LPIPS linear weights from `paired_videos_metrics/lpips/weights/`
+  - uses torchvision pretrained image backbones, which may read from `~/.cache/torch/hub/checkpoints/`
 
 Integrated official VBench loading:
 
@@ -49,6 +71,15 @@ Official VBench package modules used at runtime:
 | `clip_f.*`, `clip_t.*`, `drift_clip.*`, `repetition_clip.*` | OpenAI CLIP checkpoint | `~/.cache/clip/ViT-B-32.pt` by default |
 | `dinov2_lc.*`, `drift_dinov2.*`, `repetition_dinov2.*` | DINOv2 base directory | `~/.cache/dinov2-base/` |
 
+### Paired GT-vs-pred metrics
+
+| Metric family | Model(s) | Local path |
+| --- | --- | --- |
+| `fvd_pair`, `fvd_dataset` (`styleganv`) | I3D TorchScript | bundled at `paired_videos_metrics/fvd/styleganv/i3d_torchscript.pt` |
+| `fvd_pair`, `fvd_dataset` (`videogpt`) | I3D PyTorch weights | bundled at `paired_videos_metrics/fvd/videogpt/i3d_pretrained_400.pt` |
+| `lpips_mean` | LPIPS linear weights | bundled at `paired_videos_metrics/lpips/weights/v0.1/*.pth` |
+| `lpips_mean` backbone | torchvision AlexNet by default | `~/.cache/torch/hub/checkpoints/alexnet-owt-7be5be79.pth` |
+
 ### Official VBench dimensions integrated by this repo
 
 | VBench dimension | Model(s) | Local path |
@@ -73,6 +104,11 @@ For the two VBench CLIP files, the `~/.cache/vbench/clip_model/` paths do not ne
 ### Toolkit-native DINOv2
 
 - Hugging Face repo: `https://huggingface.co/facebook/dinov2-base`
+
+### Paired LPIPS backbone
+
+- torchvision AlexNet checkpoint
+  - `https://download.pytorch.org/models/alexnet-owt-7be5be79.pth`
 
 ### Official VBench integrated assets
 
@@ -114,6 +150,18 @@ wget -P ~/.cache/clip https://openaipublic.azureedge.net/clip/models/b8cca3fd41a
 ```bash
 git clone https://huggingface.co/facebook/dinov2-base ~/.cache/dinov2-base
 ```
+
+### 2.5 Paired LPIPS backbone cache
+
+If you use `longvideo-eval paired-run` with LPIPS enabled, pre-populate the torchvision cache:
+
+```bash
+mkdir -p ~/.cache/torch/hub/checkpoints
+wget -O ~/.cache/torch/hub/checkpoints/alexnet-owt-7be5be79.pth \
+  https://download.pytorch.org/models/alexnet-owt-7be5be79.pth
+```
+
+If you run inside a restricted environment where `~/.cache` is not writable, point `TORCH_HOME` to a writable directory before running `paired-run`.
 
 ### 3. Official VBench integrated cache
 
@@ -194,3 +242,4 @@ rm ~/.cache/vbench/raft_model/models.zip
 - The integrated VBench wrapper now forces `--load_ckpt_from_local True`.
 - VBench `clip_model/ViT-B-32.pt` and `clip_model/ViT-L-14.pt` can be symlinks to the shared `~/.cache/clip/` files.
 - If a required local file is missing, the toolkit raises a local-path error before evaluation instead of silently downloading.
+- The paired workflow uses bundled FVD weights from the repository, but LPIPS may still require the local torchvision AlexNet cache.

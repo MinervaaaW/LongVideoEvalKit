@@ -28,4 +28,4 @@ dev = ["pytest>=7.0"]
 longvideo-eval = "longvideo_eval.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["longvideo_eval*"]
+include = ["longvideo_eval*", "paired_videos_metrics*"]

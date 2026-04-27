@@ -2,12 +2,13 @@
 
 `LongVideoEvalKit` is an extensible evaluation toolkit for long-video generation experiments. v0.1 focuses on a stable, runnable pipeline rather than a full benchmark leaderboard.
 
-For a detailed explanation of every metric, formulas, and multi-metric analysis strategies, see [introduction.md](./introduction.md). A Chinese version is available at [介绍.md](./介绍.md). For local-only model cache setup, download URLs, expected `~/.cache` layout, and the code locations that consume each checkpoint, see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md). For the detailed TODO-style development plan, see [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md).
+For local-only model cache setup, download URLs, expected `~/.cache` layout, and the code locations that consume each checkpoint, see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md). For the detailed TODO-style development plan, see [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md).
 
 It provides:
 
 - batch video loading and segmentation;
 - prompt matching by `prompt_id`;
+- paired GT-vs-pred video evaluation with `PSNR / SSIM / LPIPS / FVD`;
 - long-range image-feature consistency;
 - CLIP-F / CLIP-T with either `open_clip_torch` or OpenAI `clip`;
 - DINOv2 long consistency when `transformers` weights are available;
@@ -19,6 +20,21 @@ It provides:
 - optional official VBench execution and merged `vbench.*` report columns.
 
 The toolkit deliberately does **not** reimplement official VBench dimensions. It can invoke official VBench, standardize the raw outputs, and merge them into toolkit reports with a `vbench.*` prefix.
+
+The toolkit now has two complementary workflows:
+
+- `longvideo-eval run`: evaluate long-video generations as a model-level dataset using prompt-aware long-range metrics.
+- `longvideo-eval paired-run`: evaluate paired GT-vs-pred videos using `PSNR / SSIM / LPIPS / FVD`.
+
+## Documentation map
+
+- [introduction.md](./introduction.md): detailed English explanation of the `run` workflow metrics, formulas, and analysis guidance.
+- [介绍.md](./介绍.md): Chinese overview of the toolkit, workflow positioning, and long-video metric interpretation.
+- [metrics_list.md](./metrics_list.md): consolidated metric inventory for both `run` and `paired-run`, including current output field names.
+- [paired_videos_metrics/METRICS_GUIDE_ZH.md](./paired_videos_metrics/METRICS_GUIDE_ZH.md): Chinese guide for `paired-run`, including `PSNR / SSIM / LPIPS / FVD`, pairing rules, and result analysis.
+- [paired_videos_metrics/README.md](./paired_videos_metrics/README.md): submodule-focused usage notes for paired video evaluation.
+- [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md): local checkpoint and cache preparation.
+- [DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md): roadmap and implementation notes.
 
 ## Installation
 
@@ -49,6 +65,8 @@ Official VBench is installed separately:
 ```bash
 pip install vbench
 ```
+
+For paired-video metrics, install torch separately in the environment you use for `paired-run`. The toolkit expects local model weights instead of runtime downloads whenever possible; see [MODEL_CACHE_SETUP.md](./MODEL_CACHE_SETUP.md).
 
 ## Supported input layouts
 
@@ -115,6 +133,43 @@ outputs/
   per_video_metrics.csv
   model_summary.csv
 ```
+
+Run paired GT-vs-pred evaluation:
+
+```bash
+conda run -n eval longvideo-eval paired-run \
+  --gt-dir ./paired_eval/gt \
+  --pred-dir ./paired_eval/pred \
+  --output-dir ./outputs/paired_eval_demo \
+  --device cuda
+```
+
+This produces:
+
+```text
+outputs/paired_eval_demo/
+  config.json
+  pairing_report.json
+  pairing_report.csv
+  per_video_metrics.jsonl
+  per_video_metrics.csv
+  summary.json
+  final_results.json
+```
+
+`pairing_report.*` summarizes the pairing process:
+
+- `non_exact_match_pairs`: matched successfully, but not by exact filename;
+- `unmatched_gt_videos`: GT videos with no matching prediction;
+- `unmatched_pred_videos`: prediction videos with no matching GT.
+
+The paired workflow uses the following matching strategy:
+
+1. exact filename match
+2. exact stem match after removing the extension
+3. suffix-stem match from the end of the stem
+
+When the paired videos have different durations, the longer video is truncated **from the beginning** to the shorter duration before metric computation.
 
 For a config-based run:
 
@@ -198,6 +253,37 @@ outputs/test_model_perf_vbench/
 
 ## Metrics in v0.1
 
+For a full inventory of current metrics and output fields, see [metrics_list.md](./metrics_list.md).
+
+For longer-form metric explanations:
+
+- use [introduction.md](./introduction.md) or [介绍.md](./介绍.md) for the `run` workflow;
+- use [paired_videos_metrics/METRICS_GUIDE_ZH.md](./paired_videos_metrics/METRICS_GUIDE_ZH.md) for the `paired-run` workflow.
+
+### Paired video metrics
+
+The `paired-run` workflow is intended for settings where each generated video corresponds to one GT video.
+
+It reports:
+
+- `psnr_mean`
+- `ssim_mean`
+- `lpips_mean`
+- `fvd_pair`
+- dataset-level `fvd_dataset`
+
+Use it for:
+
+- video prediction
+- reconstruction
+- aligned video-to-video generation
+- model-to-model output comparison against a fixed reference directory
+
+Do **not** interpret these paired metrics the same way as the long-video prompt-aware metrics from `run`. They answer a different question:
+
+- `run`: “how good is this model as a long-video generator on a prompt set?”
+- `paired-run`: “how close is this prediction set to this reference set?”
+
 ### Always available
 
 These use no heavy model weights:
@@ -248,7 +334,7 @@ This mode automatically enables CLIP and DINOv2, and adds:
 - `paper.dinov2_cf.mean`, `paper.dinov2_cf.end`, `paper.dinov2_cf.drop`
 - `paper.balance.mean` in `model_summary.csv`
 
-These metrics are documented in detail in [introduction.md](./introduction.md) and [介绍.md](./介绍.md).
+These metrics are documented in detail in [introduction.md](./introduction.md), [介绍.md](./介绍.md), and [metrics_list.md](./metrics_list.md).
 
 ### Optional official VBench columns
 

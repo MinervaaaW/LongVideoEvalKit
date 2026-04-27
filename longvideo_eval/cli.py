@@ -6,6 +6,7 @@ from pathlib import Path
 
 from longvideo_eval.config import build_config_from_args
 from longvideo_eval.metrics.vbench_wrapper import run_and_collect_vbench, write_vbench_merged_outputs
+from longvideo_eval.paired_runner import run_paired_eval_from_cli
 from longvideo_eval.pipeline import run_eval
 
 
@@ -56,6 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     vbench.add_argument("--mode", default="custom_input", help="VBench mode, currently only custom_input is supported")
     vbench.add_argument("--model-name", default=None, help="Model name used in merged outputs")
     vbench.add_argument("--dry-run", action="store_true", help="Print the VBench commands without executing them")
+
+    paired = sub.add_parser("paired-run", help="Run paired GT-vs-pred video evaluation with FVD, SSIM, PSNR, and LPIPS")
+    paired.add_argument("--gt-dir", required=True, help="Directory of ground-truth videos")
+    paired.add_argument("--pred-dir", required=True, help="Directory of predicted/generated videos")
+    paired.add_argument("--output-dir", default=None, help="Output directory")
+    paired.add_argument("--fvd-method", choices=["styleganv", "videogpt"], default="styleganv")
+    paired.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    paired.add_argument("--max-videos", type=int, default=None, help="Optionally evaluate only the first N matched videos")
+    paired.add_argument("--fvd-resolution", type=int, default=224, help="Resolution used before FVD feature extraction")
+    paired.add_argument("--skip-fvd", action="store_true", help="Skip FVD computation")
+    paired.add_argument("--skip-lpips", action="store_true", help="Skip LPIPS computation")
     return parser
 
 
@@ -91,6 +103,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"summary_rows={len(results.summary_rows)}, "
                 f"per_video_rows={len(results.per_video_rows)}, "
                 f"output_dir={args.output_dir}"
+            )
+            return 0
+        if args.command == "paired-run":
+            result = run_paired_eval_from_cli(args)
+            summary = result["summary"]
+            print(
+                f"Done. matched={result['config']['matched_video_count']}, "
+                f"output_dir={result['config']['output_dir']}, "
+                f"psnr={summary['psnr_mean']:.4f}, ssim={summary['ssim_mean']:.4f}, "
+                f"lpips={summary['lpips_mean']:.4f}, fvd={summary['fvd_dataset']:.4f}"
             )
             return 0
         parser.error(f"Unknown command: {args.command}")

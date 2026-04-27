@@ -1,6 +1,21 @@
+# Metrics List
+
+本文档按两条评测路径整理当前工具包支持或规划中的指标：
+
+1. `longvideo-eval run`
+   面向长视频集合评测，结合 prompt、抽帧、segment 特征和长时一致性分析。
+2. `longvideo-eval paired-run`
+   面向 GT-vs-pred 成对视频评测，输出 `PSNR / SSIM / LPIPS / FVD`。
+
+请先区分这两条路径，因为它们回答的问题不同：
+
+- `run`：这个模型作为一个长视频生成器，整体表现如何
+- `paired-run`：这一组预测视频与参考视频有多接近
+
+## A. longvideo-eval run：长视频集合评测指标
+
 | 状态 | 指标名称 | 计算方式 | Bench 工具库 / 核对来源 | 当前代码输出字段名 |
 |---|---|---|---|---|
-| ✓ | Metadata（视频元信息） | 直接读取视频基础属性：时长、原始 fps、帧数、分辨率。 | 仓内原生实现。 | `metadata.duration_sec`, `metadata.video_fps`, `metadata.num_frames`, `metadata.width`, `metadata.height` |
 | ✓ | Quality Proxy（仓内代理质量） | 逐帧用 `0.7 * sharpness + 0.3 * exposure_score` 计算轻量级无参考代理质量，再在 segment 上聚合。不是 MUSIQ，也不是官方 VBench Imaging Quality。 | 仓内原生实现，[quality_proxy.py](/home/wangm/causal-forcing-it2v/longvideo_evalkit_v0_1/longvideo_eval/metrics/quality_proxy.py:9) | `quality_proxy.mean`, `quality_proxy.head`, `quality_proxy.tail`, `quality_proxy.segment_std`, `quality_proxy.delta_abs`, `quality_proxy.delta_drop` |
 | ✓ | ColorHist Long Consistency（仓内原生） | 先提取帧级颜色直方图特征，再做 segment mean feature，最后计算各 segment 相对首 segment 的余弦相似度。 | 仓内原生实现，[long_consistency.py](/home/wangm/causal-forcing-it2v/longvideo_evalkit_v0_1/longvideo_eval/metrics/long_consistency.py:21) | `colorhist_lc.mean`, `colorhist_lc.end`, `colorhist_lc.drop` |
 | ✓ | ColorHist Drift（仓内原生） | 基于颜色直方图 segment feature，计算各 segment 相对首 segment 的 `1-cos` 漂移。 | 仓内原生实现。 | `drift_colorhist.mean`, `drift_colorhist.end`, `drift_colorhist.max` |
@@ -36,3 +51,42 @@
 | ◐ | Latency（新增到这些论文中明确使用） | `Latency = t_output_ready - t_request_or_current_chunk_start`；可报告均值、P50、P95，或稳定滚动后的延迟。 | 无统一 bench；当前代码只透传 sidecar 里的 latency，不负责采集或聚合 P50/P95。 | `efficiency.latency_ms` |
 | ○ | Context Length / Effective Context Length（新增） | 常记为可稳定利用的历史上下文秒数，`Context Length = #context_frames / fps`。高不一定更好，要结合 drift / repetition。 | 无统一 bench；Context Forcing 论文直接报告 effective context length（20s+），当前代码未实现。 | `无` |
 | ○ | Object Class / Multiple Objects / Human Action / Color / Spatial Relationship / Scene / Temporal Style / Appearance Style（新增） | 全部使用官方 VBench 各维度脚本；不建议自行改公式。每个维度对应特定 prompt subset 与判别 / 匹配模型评分。高越好。 | 可：官方 `VBench` / `VBench++`；Rolling Forcing 明确说明 full semantic evaluation 用 official standardized scripts，但当前代码未接这些维度。 | `无` |
+
+## B. longvideo-eval paired-run：成对视频评测指标
+
+这条路径用于：
+
+- GT vs Pred
+- 模型 A 输出 vs 模型 B 输出
+- 视频预测 / 重建 / 对齐生成
+
+输出文件主要包括：
+
+- `pairing_report.json`
+- `pairing_report.csv`
+- `per_video_metrics.jsonl`
+- `per_video_metrics.csv`
+- `summary.json`
+- `final_results.json`
+
+其中 `pairing_report.*` 记录：
+
+- `non_exact_match_pairs`
+- `unmatched_gt_videos`
+- `unmatched_pred_videos`
+
+| 状态 | 指标名称 | 计算方式 | Bench 工具库 / 核对来源 | 当前代码输出字段名 |
+|---|---|---|---|---|
+| ✓ | PSNR（配对视频） | 对每对视频逐帧计算 `PSNR`，再对帧求平均。高越好。 | 仓内原生实现，按像素范围 `[0,1]` 计算。 | `psnr_mean` |
+| ✓ | SSIM（配对视频） | 对每对视频逐帧计算 `SSIM`，再对帧求平均。高越好。 | 仓内原生实现。 | `ssim_mean` |
+| ✓ | LPIPS（配对视频） | 对每对视频逐帧计算 `LPIPS`，再对帧求平均。低越好。 | 仓内原生实现，使用 AlexNet backbone。 | `lpips_mean` |
+| ✓ | FVD Pair（单条视频对） | 对单个 GT / Pred 视频对提取 I3D 特征，计算 Frechet Video Distance。低越好。 | 仓内原生实现，支持 `styleganv` 和 `videogpt`。 | `fvd_pair` |
+| ✓ | FVD Dataset（整组视频） | 将全部已匹配 GT 视频与 Pred 视频作为两个集合，计算整组视频级 FVD。低越好。 | 仓内原生实现。 | `fvd_dataset` |
+| ✓ | Summary Aggregation（数据集汇总） | `PSNR / SSIM / LPIPS` 按帧数加权平均；`FVD dataset` 在全体匹配样本上整体计算。 | 仓内原生实现。 | `summary.json` 中的 `psnr_mean`, `ssim_mean`, `lpips_mean`, `fvd_dataset` |
+
+## C. 备注
+
+- `paired-run` 的数值不能直接和 `run` 的长视频 prompt-aware 指标混在一起解释。
+- `PSNR / SSIM / LPIPS` 更适合有明确参考视频的任务。
+- `fvd_pair` 和 `fvd_dataset` 可能给出不同倾向，建议一起看。
+- 如果 `pairing_report` 中非精确匹配或未匹配样本很多，应该先确认配对是否符合预期，再解释最终指标。
